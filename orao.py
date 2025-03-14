@@ -111,7 +111,7 @@ def dir(image):
     click.echo('')
     click.echo('Directory list:')
     free = disk.cylinders - 1
-    click.echo("FILENAME         T START  END  UNK  U")
+    click.echo("FILENAME         T START  END AUTO  U")
     click.echo("=====================================")
     with open(image, "rb+") as file:
         for i in range(1, disk.cylinders):
@@ -124,10 +124,13 @@ def dir(image):
             name = extract_name(data)
             start_addr = data[0x20] | data[0x22] << 8
             end_addr = data[0x24] | data[0x26] << 8
-            unk_addr = data[0x28] | data[0x2a] << 8
+            auto_addr = data[0x28] | data[0x2a] << 8
             file_type = chr(data[0x2c])
+            if not file_type in ['B', 'O']:
+                click.secho(f'ERROR: uknown {file_type} for file {name}', fg="red")
+                sys.exit(-1)
             unk_byte = data[0x2e]
-            click.echo(f"{name:16} {file_type}  {start_addr:04X} {end_addr:04X} {unk_addr:04X} {unk_byte:02X}")
+            click.echo(f"{name:16} {file_type}  {start_addr:04X} {end_addr:04X} {auto_addr:04X} {unk_byte:02X}")
             free -=1
 
     click.echo('')
