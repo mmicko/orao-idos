@@ -167,7 +167,35 @@ def extract(image, filename):
 
     if not found:
         click.secho(f'ERROR: file "{filename}" not found !', fg="red")
-        sys.exit(-1)        
+        sys.exit(-1)
+
+@cli.command()
+@click.argument('image')
+@click.argument('filename')
+def erase(image, filename):
+    """Erase file"""
+    disk = check_image(image)
+    click.echo('')
+    found = False
+    with open(image, "rb+") as file:
+        for i in range(1, disk.cylinders):
+            file.seek(disk.block_size() * i, 0)
+            data = file.read(0x40)
+            if data[0]==0x00:
+                break
+            if data[0]==0xff:
+                continue
+            name = extract_name(data).strip()
+            if name == filename:
+                found = True
+                click.echo(f'Deleting file "{filename}"')
+                file.seek(disk.block_size() * i, 0)
+                write_byte(file, 0xff)
+                write_zeros(file, 255)
+
+    if not found:
+        click.secho(f'ERROR: file "{filename}" not found !', fg="red")
+        sys.exit(-1)
 
 if __name__ == '__main__':
     cli()
