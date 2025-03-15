@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
+import sys
+import os.path
+import fnmatch
 from dataclasses import dataclass
 import struct
 import click
-import sys
-import os.path
 
 @dataclass
 class Disk:
@@ -105,7 +106,8 @@ def format(image):
 
 @cli.command()
 @click.argument('image')
-def dir(image):
+@click.argument('filter', type=str, default="*")
+def dir(image, filter):
     """Directory list"""
     disk = check_image(image)
     click.echo('')
@@ -113,6 +115,7 @@ def dir(image):
     free = disk.cylinders - 1
     click.echo("FILENAME         T START  END AUTO  U")
     click.echo("=====================================")
+    found = False
     with open(image, "rb+") as file:
         for i in range(1, disk.cylinders):
             file.seek(disk.block_size() * i, 0)
@@ -121,25 +124,29 @@ def dir(image):
                 break
             if data[0]==0xff:
                 continue
-            name = extract_name(data)
-            start_addr = data[0x20] | data[0x22] << 8
-            end_addr = data[0x24] | data[0x26] << 8
-            auto_addr = data[0x28] | data[0x2a] << 8
-            file_type = chr(data[0x2c])
-            if not file_type in ['B', 'O']:
-                click.secho(f'ERROR: uknown {file_type} for file {name}', fg="red")
-                sys.exit(-1)
-            unk_byte = data[0x2e]
-            click.echo(f"{name:16} {file_type}  {start_addr:04X} {end_addr:04X} {auto_addr:04X} {unk_byte:02X}")
+            name = extract_name(data).strip()
+            if fnmatch.fnmatch(name, filter):
+                found = True
+                start_addr = data[0x20] | data[0x22] << 8
+                end_addr = data[0x24] | data[0x26] << 8
+                auto_addr = data[0x28] | data[0x2a] << 8
+                file_type = chr(data[0x2c])
+                if not file_type in ['B', 'O']:
+                    click.secho(f'ERROR: uknown {file_type} for file {name}', fg="red")
+                    sys.exit(-1)
+                unk_byte = data[0x2e]
+                click.echo(f"{name:16} {file_type}  {start_addr:04X} {end_addr:04X} {auto_addr:04X} {unk_byte:02X}")
             free -=1
-
+    if not found:
+        click.echo('')
+        click.echo(f'No files found for "{filter}"')
     click.echo('')
     click.echo(f'{free} BLOCKS FREE')
 
 @cli.command()
 @click.argument('image')
-@click.argument('filename')
-def extract(image, filename):
+@click.argument('filter', type=str, default="*")
+def extract(image, filter):
     """Extract file"""
     disk = check_image(image)
     click.echo('')
@@ -153,12 +160,12 @@ def extract(image, filename):
             if data[0]==0xff:
                 continue
             name = extract_name(data).strip()
-            if name == filename:
+            if fnmatch.fnmatch(name, filter):
+                found = True
                 start_addr = data[0x20] | data[0x22] << 8
                 end_addr = data[0x24] | data[0x26] << 8
                 data_size = end_addr - start_addr + 1
-                found = True
-                click.echo(f'Writing file "{filename}"')
+                click.echo(f'Writing file "{name}"')
                 with open(name, "wb") as f:
                     file.seek(disk.block_size() * i + 512, 0)
                     for i in range(0,data_size):
@@ -166,13 +173,13 @@ def extract(image, filename):
                         _ = file.read(1)
 
     if not found:
-        click.secho(f'ERROR: file "{filename}" not found !', fg="red")
+        click.secho(f'ERROR: No files found for "{filter}" !', fg="red")
         sys.exit(-1)
 
 @cli.command()
 @click.argument('image')
-@click.argument('filename')
-def erase(image, filename):
+@click.argument('filter', type=str, default="*")
+def erase(image, filter):
     """Erase file"""
     disk = check_image(image)
     click.echo('')
@@ -186,15 +193,15 @@ def erase(image, filename):
             if data[0]==0xff:
                 continue
             name = extract_name(data).strip()
-            if name == filename:
+            if fnmatch.fnmatch(name, filter):
                 found = True
-                click.echo(f'Deleting file "{filename}"')
-                file.seek(disk.block_size() * i, 0)
-                write_byte(file, 0xff)
-                write_zeros(file, 255)
+                if click.confirm(f'Delete file "{name}" ?'):
+                    file.seek(disk.block_size() * i, 0)
+                    write_byte(file, 0xff)
+                    write_zeros(file, 255)
 
     if not found:
-        click.secho(f'ERROR: file "{filename}" not found !', fg="red")
+        click.secho(f'ERROR: No files found for "{filter}" !', fg="red")
         sys.exit(-1)
 
 if __name__ == '__main__':
