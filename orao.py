@@ -133,7 +133,7 @@ def dir(image, filter):
                 file_type = chr(data[0x2c])
                 if not file_type in ['B', 'O']:
                     click.secho(f'ERROR: uknown {file_type} for file {name}', fg="red")
-                    sys.exit(-1)
+                    #sys.exit(-1)
                 unk_byte = data[0x2e]
                 click.echo(f"{name:16} {file_type}  {start_addr:04X} {end_addr:04X} {auto_addr:04X} {unk_byte:02X}")
             free -=1
@@ -201,6 +201,110 @@ def erase(image, filter):
                     write_zeros(file, 255)
 
     if not found:
+        click.secho(f'ERROR: No files found for "{filter}" !', fg="red")
+        sys.exit(-1)
+
+
+class BasedIntParamType(click.ParamType):
+    name = 'integer'
+
+    def convert(self, value, param, ctx):
+        try:
+            if value[:2].lower() == '0x':
+                return int(value[2:], 16)
+            elif value[:1] == '0':
+                return int(value, 8)
+            return int(value, 10)
+        except ValueError:
+            self.fail('%s is not a valid integer' % value, param, ctx)
+
+based_int = BasedIntParamType()
+
+@cli.command()
+@click.argument('image')
+@click.argument('filename', type=str, default="")
+@click.option('--type', type=str, default="O")
+@click.option('--start', type=based_int, default="0x0000")
+@click.option('--auto', type=based_int, default="0x0000")
+def inject(image, filename, type, start, auto):
+    """Inject file"""
+    disk = check_image(image)
+    click.echo('')
+    if not os.path.exists(filename):
+        click.secho(f'ERROR: Source file "{filename}" does not exists !', fg="red")
+        sys.exit(-1)
+    if type not in ["O", "B"]:
+        click.secho(f'ERROR: Uknown type "{type}", accepting only "O" and "B" !', fg="red")
+        sys.exit(-1)
+
+    fsize = os.path.getsize(filename)
+    fn = str(os.path.basename(filename))
+
+    with open(image, "rb") as file:
+        for i in range(1, disk.cylinders):
+            file.seek(disk.block_size() * i, 0)
+            data = file.read(0x40)
+            if data[0]==0x00:
+                break
+            if data[0]==0xff:
+                continue
+            name = extract_name(data).strip()
+            if fnmatch.fnmatch(name, filename):
+                click.secho(f'ERROR: File "{filename}" exists !', fg="red")
+                sys.exit(-1)
+
+    saved = False
+
+    with open(image, "rb+") as file:
+        for i in range(1, disk.cylinders):
+            file.seek(disk.block_size() * i, 0)
+            data = file.read(0x40)
+            if not(data[0]==0x00 or data[0]==0xff):
+                continue
+            file.seek(disk.block_size() * i, 0)
+            # write filename
+            for j in range(0,15):
+                if j<len(fn):
+                    char = fn[j]
+                    write_char(file, char.encode('ascii'))
+                else:
+                    write_byte(file, 0x20)
+            write_byte(file, 0x04)
+
+            # write file metadata
+            if type=="B":
+                start_addr = 0x0400
+                auto_addr = 0xB147
+                file_type = 0x42 # B
+                unk_byte = 0x12
+            else:
+                start_addr = start
+                auto_addr = auto
+                file_type = 0x4F # O
+                unk_byte = 0x00
+
+            end_addr = start_addr + fsize - 1
+
+            write_byte(file, start_addr & 0xff)
+            write_byte(file, (start_addr >> 8) & 0xff)
+            write_byte(file, end_addr & 0xff)
+            write_byte(file, (end_addr >> 8) & 0xff)
+            write_byte(file, auto_addr & 0xff)
+            write_byte(file, (auto_addr >> 8) & 0xff)
+            write_byte(file, file_type)
+            write_byte(file, unk_byte)
+
+            # write file content
+            file.seek(disk.block_size() * i + 512, 0)
+            with open(filename, "rb") as f:
+                data = f.read()
+                for d in data:
+                    write_byte(file, d)
+
+            saved = True
+            break
+
+    if not saved:
         click.secho(f'ERROR: No files found for "{filter}" !', fg="red")
         sys.exit(-1)
 
