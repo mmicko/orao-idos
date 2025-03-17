@@ -54,9 +54,11 @@ def check_image(image):
         click.echo(f'Disk name : {name}')
         click.echo(f'C/H/S : {cylinders}/{heads}/{sectors}')
         expected_size = cylinders * heads * sectors * 512
-        if fsize != expected_size:
+        if expected_size > fsize:
             click.secho(f'ERROR: file expected size is {expected_size}, but actual is {fsize}', fg="red")
             sys.exit(-1)
+        if fsize != expected_size:
+            click.secho(f'WARNING: file expected size is {expected_size}, but actual is {fsize}', fg="yellow")
 
         return Disk(name, cylinders, heads, sectors)
 
@@ -133,7 +135,6 @@ def dir(image, filter):
                 file_type = chr(data[0x2c])
                 if not file_type in ['B', 'O']:
                     click.secho(f'ERROR: uknown {file_type} for file {name}', fg="red")
-                    #sys.exit(-1)
                 unk_byte = data[0x2e]
                 click.echo(f"{name:16} {file_type}  {start_addr:04X} {end_addr:04X} {auto_addr:04X} {unk_byte:02X}")
             free -=1
@@ -166,9 +167,24 @@ def extract(image, filter):
                 end_addr = data[0x24] | data[0x26] << 8
                 data_size = end_addr - start_addr + 1
                 click.echo(f'Writing file "{name}"')
+                blocks = data_size >> 8
+                pos = 0
                 with open(name, "wb") as f:
-                    file.seek(disk.block_size() * i + 512, 0)
-                    for i in range(0,data_size):
+                    for b in range(0,blocks):
+                        # This actually skip sector 0 of next head
+                        if pos == disk.sectors-2:
+                            pos += 1
+                        file.seek(disk.block_size() * i + (pos + 1) * 512, 0)
+                        for j in range(0,256):
+                            f.write(file.read(1))
+                            _ = file.read(1)
+                        pos += 1
+
+                    # This actually skip sector 0 of next head
+                    if pos == disk.sectors-2:
+                        pos += 1               
+                    file.seek(disk.block_size() * i + (pos + 1) * 512, 0)
+                    for j in range(0,data_size & 0xff):
                         f.write(file.read(1))
                         _ = file.read(1)
 
@@ -294,12 +310,27 @@ def inject(image, filename, type, start, auto):
             write_byte(file, file_type)
             write_byte(file, unk_byte)
 
-            # write file content
-            file.seek(disk.block_size() * i + 512, 0)
+            blocks = fsize >> 8
+            pos = 0
             with open(filename, "rb") as f:
                 data = f.read()
-                for d in data:
-                    write_byte(file, d)
+
+                for b in range(0,blocks):
+                    # This actually skip sector 0 of next head
+                    if pos == disk.sectors-2:
+                        pos += 1
+                    file.seek(disk.block_size() * i + (pos + 1) * 512, 0)
+
+                    for j in range(0,256):
+                        write_byte(file, data[b*256 + j])
+                    pos += 1
+
+                # This actually skip sector 0 of next head
+                if pos == disk.sectors-2:
+                    pos += 1               
+                file.seek(disk.block_size() * i + (pos + 1) * 512, 0)
+                for j in range(0,fsize & 0xff):
+                    write_byte(file, data[blocks*256 + j])
 
             saved = True
             break
