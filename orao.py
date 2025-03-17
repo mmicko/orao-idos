@@ -48,7 +48,7 @@ def check_image(image):
         file.seek(0)
         data = file.read(0x40)
         name = extract_name(data)
-        cylinders = data[0x20] + (data[0x22] << 8)
+        cylinders = data[0x20] + (data[0x22] << 8) + 1
         heads = data[0x24]
         sectors = data[0x26]
         click.echo(f'Disk name : {name}')
@@ -69,9 +69,9 @@ def format_cylinder(file, disk, num):
 @cli.command()
 @click.argument('image')
 @click.option('-n', '--name', type=str, default="ORAO")
-@click.option('-c', '--cylinders', type=int, default=124)
-@click.option('-h', '--heads', type=int, default=16)
-@click.option('-s', '--sectors', type=int, default=63)
+@click.option('-c', '--cylinders', type=int, default=490)
+@click.option('-h', '--heads', type=int, default=4)
+@click.option('-s', '--sectors', type=int, default=32)
 def create(image, name, cylinders, heads, sectors):
     """Create image file"""
     click.echo('Creating image file')
@@ -85,12 +85,14 @@ def create(image, name, cylinders, heads, sectors):
             write_char(out, char.encode('ascii'))
         write_byte(out, 0x04)
         write_zeros(out, 15-len(name))
+        # disk stores cylinder max value, not total number
+        cylinders -= 1
         write_byte(out, int(cylinders & 0xff))
         write_byte(out, (cylinders >> 8) & 0xff)
         write_byte(out, heads & 0xff)
         write_byte(out, sectors & 0xff)
         write_zeros(out, 236)
-        cnt = cylinders * heads * sectors - 1
+        cnt = (cylinders + 1) * heads * sectors - 1
         write_zeros(out, cnt * 256)
 
 @cli.command()
@@ -114,7 +116,8 @@ def dir(image, filter):
     disk = check_image(image)
     click.echo('')
     click.echo('Directory list:')
-    free = disk.cylinders - 1
+    # remove cylinder 0 and use this as max number
+    free = disk.cylinders - 2
     click.echo("FILENAME         T START  END AUTO  U")
     click.echo("=====================================")
     found = False
